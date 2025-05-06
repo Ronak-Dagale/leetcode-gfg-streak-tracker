@@ -1,0 +1,70 @@
+name: Check Streak Daily
+
+on:
+  schedule:
+    # Run at 11:00 PM IST (17:30 UTC)
+    - cron: '30 17 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+# Important: This gives the workflow permission to modify repository contents
+permissions:
+  contents: write
+
+jobs:
+  check-streak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Read status.json
+        id: read_status
+        run: |
+          # Using the new environment file approach instead of set-output
+          echo "DATE=$(jq -r '.date' status.json)" >> $GITHUB_ENV
+          echo "LEETCODE_DONE=$(jq -r '.leetcodeDone' status.json)" >> $GITHUB_ENV
+          echo "GFG_DONE=$(jq -r '.gfgDone' status.json)" >> $GITHUB_ENV
+      
+      - name: Check if email should be sent
+        id: check
+        run: |
+          today=$(date +%Y-%m-%d)
+          echo "Today is $today"
+          echo "Status date is ${{ env.DATE }}"
+          echo "LeetCode done: ${{ env.LEETCODE_DONE }}"
+          echo "GFG done: ${{ env.GFG_DONE }}"
+          
+          if [ "${{ env.DATE }}" != "$today" ] || \
+             [ "${{ env.LEETCODE_DONE }}" != "true" ] || \
+             [ "${{ env.GFG_DONE }}" != "true" ]; then
+            echo "SEND_EMAIL=true" >> $GITHUB_ENV
+          else
+            echo "SEND_EMAIL=false" >> $GITHUB_ENV
+          fi
+      
+      - name: Send Reminder Email via EmailJS
+        if: env.SEND_EMAIL == 'true'
+        run: |
+          curl -X POST https://api.emailjs.com/api/v1.0/email/send \
+          -H 'origin: http://localhost' \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "service_id": "${{ secrets.EMAILJS_SERVICE_ID }}",
+            "template_id": "${{ secrets.EMAILJS_TEMPLATE_ID }}",
+            "user_id": "${{ secrets.EMAILJS_PUBLIC_KEY }}",
+            "template_params": {
+              "to_name": "Your Name",
+              "message": "You missed your LeetCode or GFG problem today!",
+              "to_email": "your.email@example.com"
+            }
+          }'
+      
+      - name: Reset status for next day
+        run: |
+          today=$(date +%Y-%m-%d)
+          echo "{\"date\": \"$today\", \"leetcodeDone\": false, \"gfgDone\": false}" > status.json
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git add status.json
+          git commit -m "Reset status for $today"
+          # Using token for authentication
+          git push
